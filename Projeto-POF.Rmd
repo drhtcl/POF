@@ -1,0 +1,580 @@
+---
+title: "Auditando o IBGE usando R"
+subtitle: Avaliação do Consumo Médio e Fonte de Proteína no Brasil utilizando Microdados
+  como fonte
+output:
+  word_document:
+    toc: yes
+  html_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+```{r, setup, include=FALSE, class.source="bg-success", collapse=TRUE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE,class.source="bg-success", collapse=TRUE,warning = FALSE)
+knitr::opts_knit$set(root.dir = "/mnt/DADOS/Data Science/POF/")
+
+getwd()
+```
+
+# Resumo
+
+
+Este trabalho é uma prática no campo da ciencia de dados utilizando R como ferramenta analítica.
+A intenção é tentar reproduzir os resultados obtidos e publicados pelo Institudo Brasileiro de Geografia e Estatística (IBGE) sobre o consumo de proteínas no país e fazer novas inferências com o mesmo conjunto de dados, entre elas, qual a razão entre a proteina vegetal e animal na dieta.
+Nem todos os passos do tratamento dos dados e bases usadas para cálculo de valor proteico foram encontradas, foi escolhida a melhor aproximação possível. 
+
+
+# Bibliotecas
+
+Os seguintes pacotes foram utiizados dentro do R versão 3.6.3
+
+```{r message=FALSE, warning=FALSE,class.source="bg-success"}
+library(readr)
+library(tidyverse)
+library(stringr)
+library(vtree)
+library(knitr)
+library(kableExtra)
+```
+
+
+# Introdução
+Os dados da POF foram otidos a partir do site do IBGE e são referentes aos anos 2017-2018:
+https://www.ibge.gov.br/estatisticas/sociais/saude/24786-pesquisa-de-orcamentos-familiares-2.html?=&t=downloads
+
+
+# Ingerindo dados POF IBGE
+
+Os scripts de ingestão foram fornecidos pelo proprio IBGE juntamente com os dados brutos
+Estes scripts criam um data frame já com a identificação e largura de cada coluna.
+
+Primeiro com o consumo alimentar:
+
+```{r eval=FALSE}
+CONSUMO_ALIMENTAR <- 
+  read.fwf("CONSUMO_ALIMENTAR.txt" 
+           , widths = c(2,4,1,9,2,1,2,2,2,4,2,7,3,
+                        2,1,1,1,1,1,1,1,1,1,1,1,1,
+                        1,1,2,2,7,9,6,14,14,14,14,
+                        14,14,14,14,14,14,14,14,
+                        14,14,14,14,14,14,14,14,
+                        14,14,14,14,14,14,14,14,
+                        14,14,15,10,15,1
+           )
+           , na.strings=c(" ")
+           , col.names = c("UF", "ESTRATO_POF", "TIPO_SITUACAO_REG",
+                           "COD_UPA", "NUM_DOM", "NUM_UC",
+                           "COD_INFOR,MANTE", "QUADRO", "SEQ",
+                           "V9005", "V9007", "V9001", "V9015",
+                           "F_PREPARO", "V9017", "V9018", "V9019",
+                           "V9020", "V9021", "V9022", "V9023",
+                           "V9024", "V9025", "V9026", "V9027",
+                           "V9028", "V9029", "V9030",
+                           "COD_UNIDADE_MEDIDA_FINAL",
+                           "COD_PREPARACAO_FINAL", "GRAMATURA1",
+                           "QTD", "COD_TBCA", "ENERGIA_KCAL",
+                           "ENERGIA_KJ", "PTN", "CHOTOT", "FIBRA",
+                           "LIP", "COLEST", "AGSAT", "AGMONO",
+                           "AGPOLI", "AGTRANS", "CALCIO", "FERRO",
+                           "SODIO", "MAGNESIO", "FOSFORO", "POTASSIO",
+                           "COBRE", "ZINCO", "VITA_RAE", "TIAMINA",
+                           "RIBOFLAVINA", "NIACINA", "PIRIDOXAMINA",
+                           "COBALAMINA", "VITD", "VITE", "VITC",
+                           "FOLATO", "PESO", "PESO_FINAL",
+                           "RENDA_TOTAL", "DIA_SEMANA", "DIA_ATIPICO")
+           , dec="."
+  )   
+```
+
+Armazena no HD local arquivo serializado para leituras futuras:
+
+```{r,eval=FALSE}
+
+saveRDS(CONSUMO_ALIMENTAR,"CONSUMO_ALIMENTAR.rds")
+```
+
+Agora, com as caracteristicas da dieta:
+
+```{r, eval=FALSE}
+CARACTERISTICAS_DIETA <- 
+  read.fwf("CARACTERISTICAS_DIETA.txt" 
+           , widths = c(2,4,1,9,2,1,2,1,1,1,1,
+                        1,1,1,1,1,1,1,1,1,1,1,
+                        1,1,1,1,3,3,14,15,10
+           )
+           , na.strings=c(" ")
+           , col.names = c("UF", "ESTRATO_POF", "TIPO_SITUACAO_REG",
+                           "COD_UPA", "NUM_DOM", "NUM_UC",
+                           "COD_INFORMANTE", "V7101", "V7102",
+                           "V71031", "V71032", "V71033", "V71034",
+                           "V71035", "V71036", "V71037", "V71038",
+                           "V7104", "V71051", "DIETA_PRESSAO_ALTA", "DIETA_COLESTEROL",
+                           "DIETA_DIABETES", "DIETA_CORACAO", "V71056", "V71A01",
+                           "V71A02", "V72C01", "V72C02", "PESO",
+                           "PESO_FINAL", "RENDA_TOTAL")
+           , dec="."
+  )   
+# Armazena no HD local arquivo serializado para leituras futuras
+saveRDS(CARACTERISTICAS_DIETA,"CARACTERISTICAS_DIETA.rds")
+```
+
+Dados do Morador:
+
+```{r,eval=FALSE}
+setwd("/mnt/DADOS/Data Science/POF")
+
+MORADOR <- 
+  read.fwf("MORADOR.txt" 
+           , widths = c(2,4,1,9,2,1,2,2,1,2,2,4,3,1,1,
+                        1,1,1,2,1,2,1,1,1,1,1,1,1,1,1,
+                        1,1,1,1,1,2,1,1,2,1,1,2,1,1,1,
+                        2,1,2,14,14,10,1,1,20,20,20,20)
+           , na.strings=c(" ")
+           , col.names = c("UF", "ESTRATO_POF", "TIPO_SITUACAO_REG", 
+                           "COD_UPA", "NUM_DOM", "NUM_UC", "COD_INFORMANTE",
+                           "V0306", "V0401", "V04021", "V04022", "V04023",
+                           "V0403", "V0404", "V0405", "V0406", "V0407",
+                           "V0408", "V0409", "V0410", "V0411", "V0412",
+                           "V0413", "V0414", "V0415", "V0416", 
+                           "V041711", "V041712", "V041721", "V041722",
+                           "V041731", "V041732", "V041741", "V041742",
+                           "V0418", "V0419", "V0420", "V0421", "V0422",
+                           "V0423", "V0424", "V0425", "V0426", "V0427",
+                           "V0428", "V0429", "V0430", "ANOS_ESTUDO",
+                           "PESO", "PESO_FINAL", "RENDA_TOTAL",
+                           "INSTRUCAO", "COMPOSICAO", "PC_RENDA_DISP",
+                           "PC_RENDA_MONET", "PC_RENDA_NAO_MONET",
+                           "PC_DEDUCAO")
+           , dec="."
+           )   
+# Armazena no HD local arquivo serializado para leituras futuras
+saveRDS(MORADOR,"MORADOR.rds")
+```
+
+Salvando os dados do Morador:
+
+```{r}
+MORADOR <- readRDS("MORADOR.rds")
+```
+
+# Consolidação dos microdados
+
+
+Criando a POF completa, consolidando as planilhas MORADOR, CONSUMO_ALIMENTAR E CARACTERISTICAS_DIETA usando o campo "control" que é a concatenizacao dos campos COD_UPA, NUM_DOM, NUM_UC, COD_INFORMANTE presente em todas as planilhas:
+
+```{r, eval=FALSE}
+CARACTERISTICAS_DIETA <-transform(CARACTERISTICAS_DIETA, control=paste0(COD_UPA,NUM_DOM,NUM_UC,COD_INFORMANTE))
+MORADOR <-  transform(MORADOR, control=paste0(COD_UPA,NUM_DOM,NUM_UC,COD_INFORMANTE))
+CONSUMO_ALIMENTAR <-  transform(CONSUMO_ALIMENTAR, control=paste0(COD_UPA,NUM_DOM,NUM_UC,COD_INFOR.MANTE))
+POF_completa <-merge(MORADOR,CONSUMO_ALIMENTAR, by="control",all.x = TRUE, all.y = TRUE)
+POF_completa <-merge(CARACTERISTICAS_DIETA,POF_completa, by="control", all.x = TRUE, all.y = TRUE)
+
+saveRDS(POF_completa,"POF_completa.rds")
+```
+
+Carregando a POF_completa anteriomente salva
+
+```{r}
+POF_completa <- readRDS("POF_completa.rds")
+```
+
+
+Filtrando somente os codigos que interessam: control, UF, peso corporal, altura, idade, sexo, gravida, lactante, anos de estudo, grau de instrucao, rural/urbano, codigo do alimento, quantidade, cod. TBCA, peso(amostral), peso (amostral) final:
+
+```{r}
+POF_filtrada <- POF_completa[c(1,2,4,21,22,23,24,26,27,28,29,45,46,47,80,81,82,84,97,101,103,119,121,122,153)]
+```
+
+Confirmando os nomes da colunas (variáveis) dentro da POF_filtrada:
+
+```{r collapse=TRUE}
+names(POF_filtrada) 
+```
+
+
+```{r}
+saveRDS(POF_filtrada,"POF_filtrada.rds")
+```
+
+
+# Substiuindo os titulos das colunas para mais fácil entendimento
+
+
+```{r }
+POF_filtrada<- POF_filtrada %>% 
+  rename("Area_Habitacao"="TIPO_SITUACAO_REG",
+         "Sexo"="V0404",
+         "Altura"="V72C02",
+         "Idade"="V0403",
+         "Cor"="V0405",
+         "Gravida"="V71A01",
+         "Lactante"="V71A02",
+         "Cod_alimento"="V9001",
+         "PREPARACAO"="V9016",
+         "DCORACAO"="V71055",
+         "DDIABETES" ="V71054",
+         "DPRESSAOALTA"="V71052",
+         "DCOLESTEROL"="V71053",
+         "Peso"="V72C01")
+```
+
+# Recodificando as observações
+
+Usando "Recode" para trocar os valores sem precisar alterar a ordem das colunas dentro do dataframe, o grupo é mantido de acordo com o "peso".
+
+```{r }
+POF_filtrada$Area_Habitacao <- recode(POF_filtrada$Area_Habitacao, '1' = "urbano", '2' = "rural")
+```
+
+
+```{r }
+POF_filtrada$Sexo <- recode(POF_filtrada$Sexo, '1' = "homem", '2' = "mulher")
+```
+
+
+```{r }
+POF_filtrada$Cor <-recode(POF_filtrada$Cor, '1'= "branco",'2' ="preta" ,'3'="amarela", '4'="parda", '5'="indigena", '9'="SD")
+```
+
+
+```{r }
+POF_filtrada$Gravida <-recode(POF_filtrada$Gravida, '1'= "gravida",'2' ="nao gravida")
+```
+
+```{r }
+POF_filtrada$Lactante <-recode(POF_filtrada$Lactante, `1`= "lactante",'2' ="nao lactante")
+```
+
+```{r }
+POF_filtrada$INSTRUCAO <-recode(POF_filtrada$INSTRUCAO, '1'= "Sem instrucao",'2' ="Fundamental Incompleto" ,'3'="Fundamental Completo", '4'="Medio Incompleto", '5'="Medio Completo",'6'="Superior Incompleto",'7'="Superior Completo")
+```
+
+```{r }
+POF_filtrada$DPRESSAOALTA <-recode(POF_filtrada$DPRESSAOALTA, '1'= "sim",'2' ="nao")
+```
+
+```{r }
+POF_filtrada$DCOLESTEROL <-recode(POF_filtrada$DCOLESTEROL, '1'= "sim",'2' ="nao")
+```
+
+```{r }
+POF_filtrada$DDIABETES <-recode(POF_filtrada$DDIABETES, '1'= "sim",'2' ="nao")
+```
+
+
+```{r }
+POF_filtrada$DCORACAO <-recode(POF_filtrada$DCORACAO, '1'= "sim",'2' ="nao")
+```
+
+```{r }
+POF_filtrada$Preparacao <-recode(POF_filtrada$PREPARACAO, '1'= "Assado",'2' ="Cozido_gord" ,'3'="Cozido_sgordura", '4'="cru", '5'="Empanado",'6'="Ensopado",'7'="Frito", '8'="Grelhado", '9'="Refogado", '99'= "NA")
+```
+
+```{r }
+POF_filtrada$COD_PREPARACAO_FINAL <-recode(POF_filtrada$COD_PREPARACAO_FINAL, '1'= "Assado",'2' ="Cozido_gord" ,'3'="Cozido_sgordura", '4'="cru", '5'="Empanado",'6'="Ensopado",'7'="Frito", '8'="Grelhado", '9'="Refogado", '99'= "NA")
+```
+
+
+Conferindo todos os nomes das colunas novamente:
+
+```{r, collapse=TRUE}
+names(POF_filtrada)
+```
+
+Foi pesquisado durante a entrevista todos os alimentos consumidos nos ultimos dois dias.
+Substituindo o codigo do alimento pelo nome (por ex. C0001C por Abacate):
+
+```{r}
+library(readxl)
+Alimentos <- read_excel("Cadastro.xls")
+names(Alimentos)[1:2] <- c("Codigo","Alimento")
+POF_filtrada <- merge(POF_filtrada,Alimentos,by.x ="Cod_alimento",by.y = "Codigo",all.x = TRUE, all.y = TRUE)
+POF_filtrada <-POF_filtrada[c(2:27,1)]
+
+```
+
+
+Salva a POF filtrada como RDS novamente: 
+```{r} 
+saveRDS(POF_filtrada,"POF_filtrada.rds")
+```
+
+
+Os dados de composição centesimal de proteínas de cada alimento foram, utilizando o COD_TBCA, "Raspados" de internet e adicionados ao dataframe TBCA3
+
+Merge da POF_filtrada com os dados de Proteína da TBCA3, criando uma POF que contem tb os valores de proteína dos alimentos reportados:
+
+
+```{r}
+TBCA3 <-read_rds("TBCA3.rds")
+TBCA3$Proteína<- as.numeric(gsub(",",".",TBCA3$Proteína))
+TBCA4 <- TBCA3 %>% group_by(COD_TBCA) %>% summarise(Proteína=mean(Proteína))
+
+POF_Proteina <-merge(POF_filtrada,TBCA4,by.x ="COD_TBCA",by.y = "COD_TBCA" ,all.x = FALSE, all.y=FALSE  )
+
+```
+
+Agora, cada alimento possui na coluna Proteína, o valor percentual que contem de proteína.
+Para saber a quantidade de proteína ingerida, basta multiplicar a quantidade consumida (QTD) pelo % proteico(Proteína) e teremos o valor em g de proteína consumida durante os dois dias pesquisados.
+
+
+Criando a coluna Proteína_QTD por dia e salvando como RDS:
+
+```{r}
+POF_Proteina %>%  mutate(Proteina_QTD= QTD*(Proteína/100)) ->POF_Proteina
+
+saveRDS(POF_Proteina,"POF_Proteina")
+```
+
+# Análise dos dados
+
+Sumário de proteina ingerida pro dia por pessoa no Brasil
+
+
+```{r, collapse=TRUE}
+POF_Proteina  %>%  
+  group_by(control) %>% 
+  summarise(sum=sum(Proteina_QTD)/2) %>% 
+  summarise(mean=mean(sum, na.rm=TRUE)) 
+
+```
+O valor médio de consumo de proteína por dia no Brasil foi de 71,7g
+
+Apenas por homens acima de 60 anos:
+
+```{r,collapse=TRUE}
+POF_Proteina  %>% 
+  filter(Sexo=="homem", Idade >60) %>%  
+  group_by(control) %>% 
+  summarise(sum=sum(Proteina_QTD,na.rm=TRUE)/2)  %>% summarise(mean=mean(sum, na.rm=TRUE))
+```
+Encontrado 77.0g enquanto o IBGE reporta 79.9g. Diferença de 3.6%.
+
+
+Usando a media ponderada (weighted.mean) para tentar compensar pelas variações na amostragem obtemos um valor de 70.5g contra os 79.9g encontrados pelo IBGE. Isso indica que a fonte da variação poderia ser outra e não a poderação em si.
+
+
+Avaliandos apenas mulheres acima de 60 anos:
+
+```{r,collapse=TRUE}
+POF_Proteina  %>% 
+  filter(Sexo=="mulher", Idade>60) %>%  
+  group_by(control) %>% 
+  summarise(sum=sum(Proteina_QTD,na.rm=TRUE)/2) %>% 
+  summarise(mean=mean(sum, na.rm=TRUE))
+```
+FOi encontrado um valor de 60,5g de proteína por dia enquanto o valor reportados pelo IBGE foi de 62.8g, uma diferença de 3,7%.
+
+
+Levando em consideração as fontes de variação existentes: o uso ou não de fatores de expanção, variação nas tabelas de teor de proteína nos alimentos, etapas de limpeza dos dados  e etc. Considero uma diferença de 3,7% como aceitavel e prosseguirei para tentar encontrar a razão entre fontes vegetais e animais.
+
+
+Filtragem de todos os codigos que possuem as palavras chaves: Carne, Frango, Bovino, Porco, Ovo e Peixe
+
+```{r}
+
+carnes <- c("frango", "bovino", "porco", "Ovo", "Peixe", "boi","carne")
+TBCA3 %>% filter(str_detect(Descrição,pattern = paste(carnes, collapse="|"))) -> TBCA5
+TBCA3 %>% filter(!str_detect(Descrição,pattern = paste(carnes, collapse="|"))) -> TBCA6
+```
+
+
+A TBCA5 possui 355 entradas com todos os alimentos que possuem ingredientes animais com as seis palavras chaves.
+
+Cálculo do teor proteico ingerido usando somente os dados de proteína animal:
+
+```{r,collapse=TRUE}
+POF_Proteina  %>% 
+  filter(Sexo=="homem", Idade >60, COD_TBCA %in% TBCA5$COD_TBCA) %>%
+  group_by(control) %>% 
+  summarise(sum=sum(Proteina_QTD,na.rm=TRUE)/2)  %>% summarise(mean=mean(sum, na.rm=TRUE))
+```
+
+Agora, vegetal:
+
+```{r,collapse=TRUE}
+POF_Proteina  %>% 
+  filter(Sexo=="homem", Idade >60, COD_TBCA %in% TBCA6$COD_TBCA) %>%
+  group_by(control) %>% 
+  summarise(sum=sum(Proteina_QTD,na.rm=TRUE)/2)  %>% summarise(mean=mean(sum, na.rm=TRUE))
+```
+
+
+Podemos notar que a seleção dos alimentos que contem proteína animal usando palavras chaves acabaram rendendo um valor proteico de 48g (60%) e os de fonte vegetais 30g(40%).
+
+Esse dado está de acordo com pesquisas que apontam valores como 68%(2) e 66% (3) mas esses dados são relativos aos EUA e Reino Unido.
+É um pouco surpreendente que o consumo de proteína no brasil se aproxime desses paises desenvolvidos e ainda mais para a população idosa.
+
+Vamos investigar agora como esse consumo de proteina se relaciona com outras variáveis:
+
+Consumo de proteína animal por sexo para pessoas acima de 60 anos:
+
+```{r}
+POF_Proteina  %>% 
+  filter( Idade >60) %>%
+  group_by(control,Sexo,fonte_proteina=COD_TBCA %in% TBCA5$COD_TBCA) %>% 
+  summarise(sum=sum(Proteina_QTD,na.rm=TRUE)/2) %>% 
+  grep(., 'homem'= "HOMEM") %>% 
+  vtree("Sexo proteina_animal", summary="sum \n media(g)=%meanx%",horiz = FALSE)
+```
+
+No Diagrama acima é possivel ver o teor de Proteína de fonte anima para homens acima de 60 anos(48g) e de origem vegetal (30g) por dia. Os valore femininos são de 36g para origem animal e 25g para vegetal.
+Desconsiderar os valores médios por sexo, os corretos são: 
+
+
+```{r}
+POF_Proteina  %>% 
+  filter( Idade >60) %>%
+  group_by(control,Sexo) %>% 
+  summarise(sum=sum(Proteina_QTD,na.rm=TRUE)/2) %>% 
+  vtree("Sexo ", summary="sum \n media=%meanx%", horiz = FALSE,title="População idosa")
+```
+
+E qual seria a ingestão de proteína dos indivíduos que não consomem nenhum produto animal? Eles de certa forma compensariam a ausência com plantas mais ricas em proteínas?
+
+
+```{r, collapse=TRUE}
+POF_Proteina  %>% 
+  filter( Idade >60) %>% 
+     group_by(control)%>% 
+  filter(!any(COD_TBCA %in% TBCA5$COD_TBCA)) %>% 
+    summarise(sum=sum(Proteina_QTD,na.rm=TRUE)/2) 
+```
+Tivemos 220 idosos (do total de 46164 pessoas) que não reportaram nenhuma das palavras chaves. 
+
+```{r, collapse=TRUE}
+POF_Proteina  %>% 
+  filter( Idade >60) %>% 
+     group_by(control,Sexo)%>% 
+  filter(!any(COD_TBCA %in% TBCA5$COD_TBCA)) %>% 
+    summarise(sum=sum(Proteina_QTD,na.rm=TRUE)/2) %>%
+  group_by(Sexo)%>% 
+  summarise(mean=mean(sum, na.rm=TRUE))
+  
+```
+Os idosos que não reportaram consumo de proteína animal possuem uma média muito inferior ao resto da população brasileira.
+
+Vamos ver como é a distribuição deles:
+
+
+```{r}
+POF_Proteina  %>% 
+  filter( Idade >60) %>% 
+     group_by(control,Sexo)%>% 
+  filter(!any(COD_TBCA %in% TBCA5$COD_TBCA)) %>% 
+    summarise(sum=sum(Proteina_QTD,na.rm=TRUE)/2) %>%
+  ggplot()+geom_boxplot(aes(Sexo,sum))+ylab("Proteína por dia (g)")
+  
+```
+
+Realmente, valore médios mais baixos e poucos outliers.
+
+
+Ingestão de proteína por sexo e grau de instrução:
+
+
+```{r}
+POF_Proteina  %>% 
+  filter( Idade >60) %>% 
+     group_by(control,Sexo, INSTRUCAO)%>% 
+  filter(!any(COD_TBCA %in% TBCA5$COD_TBCA)) %>% 
+    summarise(sum=sum(Proteina_QTD,na.rm=TRUE)/2) %>%
+ vtree("INSTRUCAO", horiz = FALSE, title="População idosa que não consome carne")
+```
+Aparentemente a falta de proteína animal indica falta de recursos e não escolha consciente. 
+
+Cerca de 75% dos idosos sem ingestão de proteina animal possui apenas Fundamental incompleto ou não possuem instrução.
+
+Onde vivem? Regiões rurais ou urbanas?
+
+```{r}
+POF_Proteina  %>% 
+  filter( Idade >60) %>% 
+     group_by(control,Sexo, Area_Habitacao)%>% 
+  filter(!any(COD_TBCA %in% TBCA5$COD_TBCA)) %>% 
+    summarise(sum=sum(Proteina_QTD,na.rm=TRUE)/2) %>%
+ vtree("Area_Habitacao",horiz=FALSE,title="População idosa que não consome carne")
+```
+
+A grande maioria areas urbanas.
+
+
+# Conclusão
+
+Pode ser considerado um exito a reprodução das mesmas médias obtidas pelo IBGE em seu relatório de "Análise do
+Consumo Alimentar Pessoal no Brasil"(4) para o estrato de idosos acima de 60 anos com um erro tão pequeno como 3,7%.
+A ingestão de proteína de fonte animal ainda é predominante no Brasil com mais de 60%.
+A fração da população que menos ingere proteína animal tb ingere uma média inferior de proteína vegetal.
+Esse estrato da população vive majoritáriamente em cidades (75%) e não possui instrução ou possui somente fundamental incompleto (75%). 
+Pode-se concluir que populações mais pobres são associadas com menor consumo de proteína animal por questões econômicas. (BAH...óbvio Fabiano!)
+
+
+
+
+# Fontes
+
+1- https://agenciadenoticias.ibge.gov.br/agencia-sala-de-imprensa/2013-agencia-de-noticias/releases/28646-pof-2017-2018-brasileiro-ainda-mantem-dieta-a-base-de-arroz-e-feijao-mas-consumo-de-frutas-e-legumes-e-abaixo-do-esperado
+
+
+2- Levine, Morgan E. et al. Cell Metabolism, Volume 19, Issue 3, 407 - 417
+
+3- onnie M, Hooker E, Brunstrom JM, et al. Protein for Life: Review of Optimal Protein Intake, Sustainable Dietary Sources and the Effect on Appetite in Ageing Adults. Nutrients. 2018;10(3):360. Published 2018 Mar 16. doi:10.3390/nu10030360
+
+
+4- https://biblioteca.ibge.gov.br/visualizacao/livros/liv101742.pdf
+
+
+
+
+
+
+
+
+
+
+```{r, collapse=TRUE}
+POF_Proteina  %>% 
+  
+      group_by(control,Sexo,Idade)%>% 
+    summarise(sum=sum(Proteina_QTD,na.rm=TRUE)/2) %>%
+  group_by(Sexo)%>% 
+  summarise(mean=mean(sum, na.rm=TRUE))
+  
+```
+```{r, collapse=TRUE}
+POF_Proteina  %>% 
+        group_by(control,PESO_FINAL.y)%>% 
+    summarise(sum=sum(Proteina_QTD,na.rm=TRUE)/2*PESO_FINAL.y) %>%
+  ungroup() %>% 
+  summarise(sum=mean(sum, na.rm=TRUE)/189000000)
+  
+```
+
+
+
+```{r}
+POF_Proteina %>% 
+  group_by(control) %>% 
+  summarise(peso=mean(PESO_FINAL.y)) %>% 
+  summarise(sum(peso))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
